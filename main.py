@@ -7,6 +7,7 @@ from models import Base, engine, Workout
 from schemas import WorkoutCreate
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 strava_secret = os.getenv("STRAVA_CLIENT_SECRET")
@@ -104,4 +105,69 @@ async def strava_callback(code: str, scope: str = ""):
         "athlete_id": strava_data.get("athlete", {}).get("id"),
         "access_token": strava_data.get("access_token"),
         "refresh_token": strava_data.get("refresh_token")
+    }
+@app.get("/api/strava/sync-latest")
+async def sync_latest_strava_runs(db: Session = Depends(get_db)):
+    # 1. Fetch access token from environment
+    access_token = os.getenv("STRAVA_ACCESS_TOKEN")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="No access token found. Please authenticate first.")
+    
+    headers = {"Authorization": f"Bearer {access_token}"}
+    strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=10"
+    
+    # 2. Fetch raw activities from Strava
+    async with httpx.AsyncClient() as client:
+        response = await client.get(strava_activities_url, headers=headers)
+        
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch data from Strava")
+        
+    raw_activities = response.json()
+    synced_workouts = []
+    
+    # 3. Parse and extract telemetry for each activity
+    for act in raw_activities:
+        # Filter for running activities
+        if act.get("type") in ["Run", "Workout"]:
+            
+            # Convert distance from meters to kilometers (rounded to 2 decimal places)
+            distance_km = round(act.get("distance", 0.0) / 1000.0, 2)
+            
+            # Parse ISO date string to Python datetime
+            raw_date = act.get("start_date_local")
+            workout_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00")) if raw_date else datetime.utcnow()
+            
+            moving_time = act.get("moving_time", 0)
+            
+            # Check if this exact workout is already saved in SQLite to prevent duplicates
+            existing = db.query(Workout).filter(
+                Workout.total_distance == distance_km,
+                Workout.moving_time == moving_time
+            ).first()
+            
+            if not existing:
+                # Map cleaned Strava metrics into the SQLAlchemy Workout model
+                db_workout = Workout(
+                    date=workout_date,
+                    total_distance=distance_km,
+                    moving_time=moving_time,
+                    elapsed_time=act.get("elapsed_time", 0),
+                    total_elevation_gain=act.get("total_elevation_gain", 0.0),
+                    average_heartrate=act.get("average_heartrate"),
+                    max_heartrate=act.get("max_heartrate"),
+                    average_cadence=act.get("average_cadence"),
+                    user_id=1  # Assigned to default local user ID
+                )
+                
+                db.add(db_workout)
+                synced_workouts.append(db_workout)
+                
+    # 4. Commit all new workouts into the SQLite database file
+    db.commit()
+    
+    return {
+        "status": "success",
+        "new_workouts_saved": len(synced_workouts),
+        "message": f"Successfully parsed and stored {len(synced_workouts)} run(s) in dakshboard_local.db"
     }
