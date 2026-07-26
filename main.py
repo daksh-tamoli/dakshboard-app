@@ -8,6 +8,9 @@ from schemas import WorkoutCreate
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+import json
+
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 strava_secret = os.getenv("STRAVA_CLIENT_SECRET")
@@ -18,6 +21,14 @@ Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI App
 app = FastAPI(title="DAKSHboard API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)   
 
 # Database Session Dependency
 def get_db():
@@ -108,66 +119,84 @@ async def strava_callback(code: str, scope: str = ""):
     }
 @app.get("/api/strava/sync-latest")
 async def sync_latest_strava_runs(db: Session = Depends(get_db)):
-    # 1. Fetch access token from environment
     access_token = os.getenv("STRAVA_ACCESS_TOKEN")
     if not access_token:
-        raise HTTPException(status_code=401, detail="No access token found. Please authenticate first.")
+        raise HTTPException(status_code=401, detail="No access token found.")
     
     headers = {"Authorization": f"Bearer {access_token}"}
-    strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=10"
     
-    # 2. Fetch raw activities from Strava
+    # FIX: Increased per_page to 200 to pull months of historical data
+    strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=200"
+    
     async with httpx.AsyncClient() as client:
         response = await client.get(strava_activities_url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch activities")
+            
+        raw_activities = response.json()
+        synced_workouts = []
         
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail="Failed to fetch data from Strava")
+        for act in raw_activities:
+            if act.get("type") in ["Run", "Workout"]:
+                distance_km = round(act.get("distance", 0.0) / 1000.0, 2)
+                raw_date = act.get("start_date_local")
+                workout_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00")) if raw_date else datetime.utcnow()
+                moving_time = act.get("moving_time", 0)
+                
+                existing = db.query(Workout).filter(
+                    Workout.total_distance == distance_km,
+                    Workout.moving_time == moving_time
+                ).first()
+                
+                if not existing:
+                    # FIX: Fetch 1Hz Telemetry Streams for the new graph
+                    streams_url = f"https://www.strava.com/api/v3/activities/{act['id']}/streams?keys=time,heartrate,velocity_smooth,distance&key_by_type=true"
+                    stream_response = await client.get(streams_url, headers=headers)
+                    
+                    hr_stream_json = None
+                    time_stream_json = None
+                    
+                    if stream_response.status_code == 200:
+                        streams_data = stream_response.json()
+                        # Extract the data arrays and convert them to JSON strings for SQLite
+                        if 'heartrate' in streams_data:
+                            hr_stream_json = json.dumps(streams_data['heartrate']['data'])
+                        if 'time' in streams_data:
+                            time_stream_json = json.dumps(streams_data['time']['data'])
+                    
+                    db_workout = Workout(
+                        date=workout_date,
+                        total_distance=distance_km,
+                        moving_time=moving_time,
+                        elapsed_time=act.get("elapsed_time", 0),
+                        total_elevation_gain=act.get("total_elevation_gain", 0.0),
+                        average_heartrate=act.get("average_heartrate"),
+                        max_heartrate=act.get("max_heartrate"),
+                        average_cadence=act.get("average_cadence"),
+                        user_id=1,
+                        # Store the raw 1Hz arrays
+                        time_stream=time_stream_json,
+                        heartrate_stream=hr_stream_json
+                    )
+                    
+                    db.add(db_workout)
+                    synced_workouts.append(db_workout)
+                    
+        db.commit()
         
-    raw_activities = response.json()
-    synced_workouts = []
+        return {
+            "status": "success",
+            "new_workouts_saved": len(synced_workouts),
+            "message": f"Successfully parsed and stored {len(synced_workouts)} runs with telemetry streams."
+        }
+
+@app.delete("/api/workouts/{workout_id}")
+def delete_workout(workout_id: int, db: Session = Depends(get_db)):
+    workout = db.query(Workout).filter(Workout.id == workout_id).first()
+    if not workout:
+        raise HTTPException(status_code=404, detail="Workout not found")
     
-    # 3. Parse and extract telemetry for each activity
-    for act in raw_activities:
-        # Filter for running activities
-        if act.get("type") in ["Run", "Workout"]:
-            
-            # Convert distance from meters to kilometers (rounded to 2 decimal places)
-            distance_km = round(act.get("distance", 0.0) / 1000.0, 2)
-            
-            # Parse ISO date string to Python datetime
-            raw_date = act.get("start_date_local")
-            workout_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00")) if raw_date else datetime.utcnow()
-            
-            moving_time = act.get("moving_time", 0)
-            
-            # Check if this exact workout is already saved in SQLite to prevent duplicates
-            existing = db.query(Workout).filter(
-                Workout.total_distance == distance_km,
-                Workout.moving_time == moving_time
-            ).first()
-            
-            if not existing:
-                # Map cleaned Strava metrics into the SQLAlchemy Workout model
-                db_workout = Workout(
-                    date=workout_date,
-                    total_distance=distance_km,
-                    moving_time=moving_time,
-                    elapsed_time=act.get("elapsed_time", 0),
-                    total_elevation_gain=act.get("total_elevation_gain", 0.0),
-                    average_heartrate=act.get("average_heartrate"),
-                    max_heartrate=act.get("max_heartrate"),
-                    average_cadence=act.get("average_cadence"),
-                    user_id=1  # Assigned to default local user ID
-                )
-                
-                db.add(db_workout)
-                synced_workouts.append(db_workout)
-                
-    # 4. Commit all new workouts into the SQLite database file
+    db.delete(workout)
     db.commit()
     
-    return {
-        "status": "success",
-        "new_workouts_saved": len(synced_workouts),
-        "message": f"Successfully parsed and stored {len(synced_workouts)} run(s) in dakshboard_local.db"
-    }
+    return {"message": "Workout permanently deleted"}

@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index, Text
 from sqlalchemy.orm import declarative_base, relationship
+from database import Base
 
 Base = declarative_base()
 
@@ -23,10 +24,14 @@ class Workout(Base):
     moving_time = Column(Integer)
     elapsed_time = Column(Integer)
     total_elevation_gain = Column(Float)
-
     average_heartrate = Column(Float)
     max_heartrate = Column(Float)
     average_cadence = Column(Float)
+
+    time_stream = Column(Text, nullable=True)
+    heartrate_stream = Column(Text, nullable=True)
+    velocity_stream = Column(Text, nullable=True) # Pace
+    distance_stream = Column(Text, nullable=True)
 
 # TELEMETRY
 class Telemetry(Base):
