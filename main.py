@@ -6,9 +6,10 @@ import httpx
 from models import Base, engine, Workout 
 from schemas import WorkoutCreate
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key, find_dotenv
 from datetime import datetime
 import json
+from pathlib import Path
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -117,20 +118,62 @@ async def strava_callback(code: str, scope: str = ""):
         "access_token": strava_data.get("access_token"),
         "refresh_token": strava_data.get("refresh_token")
     }
+
+
+
 @app.get("/api/strava/sync-latest")
 async def sync_latest_strava_runs(db: Session = Depends(get_db)):
-    access_token = os.getenv("STRAVA_ACCESS_TOKEN")
-    if not access_token:
-        raise HTTPException(status_code=401, detail="No access token found.")
+
     
-    headers = {"Authorization": f"Bearer {access_token}"}
-    
-    # FIX: Increased per_page to 200 to pull months of historical data
-    strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=200"
-    
+    ENV_PATH = Path(__file__).resolve().parent / ".env"
+    if not ENV_PATH.exists():
+        print(f"CRITICAL SYSTEM ERROR: .env file NOT FOUND at {ENV_PATH}")
+        raise HTTPException(status_code=500, detail="Missing .env file.")
+    load_dotenv(ENV_PATH, override=True)
+
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+    refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
+
+
+    if not all([client_id, client_secret, refresh_token]):
+        print("CRITICAL ERROR: Missing Strava credentials. Check your .env file.")
+        raise HTTPException(status_code=500, detail="Missing Strava OAuth credentials.")
+
     async with httpx.AsyncClient() as client:
+        auth_url = "https://www.strava.com/oauth/token"
+        auth_payload = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }
+        
+        auth_response = await client.post(auth_url, data=auth_payload)
+        
+        if auth_response.status_code != 200:
+            # Printing the reason Strava rejected the refresh
+            print(f"STRAVA AUTH FAILURE: {auth_response.text}")
+            raise HTTPException(status_code=401, detail="Failed to refresh Strava access token.")
+            
+        auth_data = auth_response.json()
+        active_access_token = auth_data.get("access_token")
+        new_refresh_token = auth_data.get("refresh_token")
+        print("Token refreshed successfully. Fetching activities...")
+        
+        if new_refresh_token:
+            set_key(str(ENV_PATH), "STRAVA_ACCESS_TOKEN", active_access_token)
+            set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", new_refresh_token)
+            os.environ["STRAVA_ACCESS_TOKEN"] = active_access_token
+            os.environ["STRAVA_REFRESH_TOKEN"] = new_refresh_token
+            print(f"Successfully rotated tokens and saved to: {ENV_PATH}")
+        headers = {"Authorization": f"Bearer {active_access_token}"}
+        strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=200"
+        
         response = await client.get(strava_activities_url, headers=headers)
+        
         if response.status_code != 200:
+            print(f"STRAVA API FAILURE (Activities): {response.text}")
             raise HTTPException(status_code=response.status_code, detail="Failed to fetch activities")
             
         raw_activities = response.json()
@@ -149,21 +192,20 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
                 ).first()
                 
                 if not existing:
-                    # FIX: Fetch 1Hz Telemetry Streams for the new graph
-                    streams_url = f"https://www.strava.com/api/v3/activities/{act['id']}/streams?keys=time,heartrate,velocity_smooth,distance&key_by_type=true"
-                    stream_response = await client.get(streams_url, headers=headers)
+                    # FETCH ALL STREAMS
+                    streams_url = f"https://www.strava.com/api/v3/activities/{act['id']}/streams?keys=time,heartrate,velocity_smooth,altitude,cadence&key_by_type=true"
+                    stream_res = await client.get(streams_url, headers=headers)
+                    if stream_res.status_code != 200:
+                        print(f"STRAVA API FAILURE (Streams) for {act['id']}: {stream_res.text}")
+                    streams_data = stream_res.json() if stream_res.status_code == 200 else {}
                     
-                    hr_stream_json = None
-                    time_stream_json = None
-                    
-                    if stream_response.status_code == 200:
-                        streams_data = stream_response.json()
-                        # Extract the data arrays and convert them to JSON strings for SQLite
-                        if 'heartrate' in streams_data:
-                            hr_stream_json = json.dumps(streams_data['heartrate']['data'])
-                        if 'time' in streams_data:
-                            time_stream_json = json.dumps(streams_data['time']['data'])
-                    
+                    # FETCH LAPS
+                    laps_url = f"https://www.strava.com/api/v3/activities/{act['id']}/laps"
+                    laps_res = await client.get(laps_url, headers=headers)
+                    if laps_res.status_code != 200:
+                        print(f"STRAVA API FAILURE (Laps) for {act['id']}: {laps_res.text}")
+                    laps_data = laps_res.json() if laps_res.status_code == 200 else []
+
                     db_workout = Workout(
                         date=workout_date,
                         total_distance=distance_km,
@@ -174,22 +216,21 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
                         max_heartrate=act.get("max_heartrate"),
                         average_cadence=act.get("average_cadence"),
                         user_id=1,
-                        # Store the raw 1Hz arrays
-                        time_stream=time_stream_json,
-                        heartrate_stream=hr_stream_json
+                        time_stream=json.dumps(streams_data.get('time', {}).get('data')) if 'time' in streams_data else None,
+                        heartrate_stream=json.dumps(streams_data.get('heartrate', {}).get('data')) if 'heartrate' in streams_data else None,
+                        pace_stream=json.dumps(streams_data.get('velocity_smooth', {}).get('data')) if 'velocity_smooth' in streams_data else None,
+                        elevation_stream=json.dumps(streams_data.get('altitude', {}).get('data')) if 'altitude' in streams_data else None,
+                        cadence_stream=json.dumps(streams_data.get('cadence', {}).get('data')) if 'cadence' in streams_data else None,
+                        laps_data=json.dumps(laps_data)
                     )
                     
                     db.add(db_workout)
                     synced_workouts.append(db_workout)
                     
         db.commit()
+        print(f"Sync complete. {len(synced_workouts)} new workouts saved.")
+        return {"status": "success", "new_workouts": len(synced_workouts)}
         
-        return {
-            "status": "success",
-            "new_workouts_saved": len(synced_workouts),
-            "message": f"Successfully parsed and stored {len(synced_workouts)} runs with telemetry streams."
-        }
-
 @app.delete("/api/workouts/{workout_id}")
 def delete_workout(workout_id: int, db: Session = Depends(get_db)):
     workout = db.query(Workout).filter(Workout.id == workout_id).first()

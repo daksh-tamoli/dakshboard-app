@@ -14,24 +14,27 @@ class User(Base):
 
 # WORKOUT
 class Workout(Base):
-    __tablename__ = 'workouts'
+    __tablename__ = "workouts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id'))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     user = relationship("User", back_populates="workouts")
-    date = Column(DateTime, index=True)
+    date = Column(DateTime)
     total_distance = Column(Float)
     moving_time = Column(Integer)
     elapsed_time = Column(Integer)
     total_elevation_gain = Column(Float)
-    average_heartrate = Column(Float)
-    max_heartrate = Column(Float)
-    average_cadence = Column(Float)
-
+    average_heartrate = Column(Float, nullable=True)
+    max_heartrate = Column(Float, nullable=True)
+    average_cadence = Column(Float, nullable=True)
+    
     time_stream = Column(Text, nullable=True)
     heartrate_stream = Column(Text, nullable=True)
-    velocity_stream = Column(Text, nullable=True) # Pace
-    distance_stream = Column(Text, nullable=True)
+    # NEW STREAMS AND LAPS
+    pace_stream = Column(Text, nullable=True)
+    elevation_stream = Column(Text, nullable=True)
+    cadence_stream = Column(Text, nullable=True)
+    laps_data = Column(Text, nullable=True)
 
 # TELEMETRY
 class Telemetry(Base):
