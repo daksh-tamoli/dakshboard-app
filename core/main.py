@@ -43,6 +43,14 @@ app.add_middleware(
     allow_headers=["*"],
 )   
 
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "DAKSHboard API is running",
+        "documentation": "/docs"
+    }
+
 # Database Session Dependency
 def get_db():
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
