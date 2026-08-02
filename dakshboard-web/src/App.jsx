@@ -41,6 +41,8 @@ const getActivityCategory = (typeStr) => {
   return 'Other'
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+
 function App() {
   const [workouts, setWorkouts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -63,7 +65,7 @@ function App() {
   const [selectedType, setSelectedType] = useState('All')
 
   const fetchWorkouts = () => {
-    fetch('http://127.0.0.1:8000/api/workouts/')
+    fetch(`${API_BASE_URL}/api/workouts/`)
       .then((res) => res.json())
       .then((data) => {
         setWorkouts(data.sort((a, b) => new Date(a.date) - new Date(b.date)))
@@ -97,7 +99,7 @@ function App() {
   }, [])
 
   const handleStravaAuth = () => {
-    window.location.href = 'http://127.0.0.1:8000/api/auth/login'
+    window.location.href = `${API_BASE_URL}/api/auth/login`
   }
 
   const handleLogout = () => {
@@ -108,7 +110,11 @@ function App() {
 
   const forceSync = () => {
     setSyncing(true)
-    fetch('http://127.0.0.1:8000/api/strava/sync-latest')
+    const syncUrl = athlete && athlete.id 
+      ? `${API_BASE_URL}/api/strava/sync-latest?strava_id=${athlete.id}` 
+      : `${API_BASE_URL}/api/strava/sync-latest`
+      
+    fetch(syncUrl)
       .then(res => res.json())
       .then((data) => {
         fetchWorkouts()
@@ -125,7 +131,7 @@ function App() {
   const deleteWorkout = (e, id) => {
     e.stopPropagation() 
     if (!window.confirm("Permanently delete?")) return
-    fetch(`http://127.0.0.1:8000/api/workouts/${id}`, { method: 'DELETE' })
+    fetch(`${API_BASE_URL}/api/workouts/${id}`, { method: 'DELETE' })
       .then(() => {
         setWorkouts(workouts.filter(w => w.id !== id))
         if (selectedWorkout?.id === id) setSelectedWorkout(null)

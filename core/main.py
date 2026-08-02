@@ -37,7 +37,7 @@ app = FastAPI(title="DAKSHboard API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,27 +79,24 @@ def read_workout(workout_id: int, db: Session = Depends(get_db)):
 #created using ai
 @app.get("/api/auth/login")
 def login_to_strava():
-    # 1. We define the exact permissions (scopes) DAKSHboard needs to read your biometric files
     scopes = "activity:read_all,profile:read_all"
+    backend_base = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+    redirect_uri = f"{backend_base}/api/auth/callback"
     
-    # 2. We construct the secure URL using your Client ID loaded from the .env file
-    # Notice we hardcode the redirect_uri to exactly match the developer portal
     strava_auth_url = (
         f"https://www.strava.com/oauth/authorize"
         f"?client_id={os.getenv('STRAVA_CLIENT_ID')}"
         f"&response_type=code"
-        f"&redirect_uri=http://127.0.0.1:8000/api/auth/callback"
+        f"&redirect_uri={redirect_uri}"
         f"&approval_prompt=force"
         f"&scope={scopes}"
     )
-    
-    # 3. We command the user's browser to leave our site and go to Strava
     return RedirectResponse(strava_auth_url)
 
 
 @app.get("/api/auth/callback")
 async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_db)):
-    # 1. Catch code parameter and prepare token exchange payload
+    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
     token_url = "https://www.strava.com/oauth/token"
     payload = {
         "client_id": os.getenv("STRAVA_CLIENT_ID"),
@@ -108,13 +105,12 @@ async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_
         "grant_type": "authorization_code"
     }
     
-    # 2. Exchange code for access & refresh tokens
     async with httpx.AsyncClient() as client:
         response = await client.post(token_url, data=payload)
         
     if response.status_code != 200:
         print(f"STRAVA OAUTH HANDSHAKE FAILED: {response.text}")
-        return RedirectResponse(url="http://localhost:5173/?auth=error")
+        return RedirectResponse(url=f"{frontend_base}/?auth=error")
         
     strava_data = response.json()
     access_token = strava_data.get("access_token")
@@ -162,7 +158,7 @@ async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_
     # Redirect browser back to React dashboard frontend with success status and athlete info
     import urllib.parse
     athlete_param = urllib.parse.quote(json.dumps(athlete_data)) if athlete_data else ""
-    return RedirectResponse(url=f"http://localhost:5173/?auth=success&athlete={athlete_param}")
+    return RedirectResponse(url=f"{frontend_base}/?auth=success&athlete={athlete_param}")
 
 
 
