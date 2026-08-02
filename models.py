@@ -27,7 +27,8 @@ class Workout(Base):
     average_heartrate = Column(Float, nullable=True)
     max_heartrate = Column(Float, nullable=True)
     average_cadence = Column(Float, nullable=True)
-    
+    type = Column(String, nullable=True)
+
     time_stream = Column(Text, nullable=True)
     heartrate_stream = Column(Text, nullable=True)
     # NEW STREAMS AND LAPS
