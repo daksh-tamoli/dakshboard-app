@@ -86,7 +86,7 @@ def read_workout(workout_id: int, db: Session = Depends(get_db)):
 
 #created using ai
 @app.get("/api/auth/login")
-def login_to_strava(request: Request):
+def login_to_strava(request: Request, frontend_origin: str = None):
     scopes = "read,activity:read_all,profile:read_all"
     backend_base = os.getenv("BACKEND_URL")
     
@@ -100,6 +100,10 @@ def login_to_strava(request: Request):
     import urllib.parse
     encoded_redirect = urllib.parse.quote(redirect_uri, safe='')
     
+    state_param = ""
+    if frontend_origin:
+        state_param = f"&state={urllib.parse.quote(frontend_origin, safe='')}"
+    
     strava_auth_url = (
         f"https://www.strava.com/oauth/authorize"
         f"?client_id={os.getenv('STRAVA_CLIENT_ID')}"
@@ -107,18 +111,30 @@ def login_to_strava(request: Request):
         f"&redirect_uri={encoded_redirect}"
         f"&approval_prompt=force"
         f"&scope={scopes}"
+        f"{state_param}"
     )
     return RedirectResponse(strava_auth_url)
 
 
 @app.get("/api/auth/callback")
-async def strava_callback(code: str, scope: str = "", request: Request = None, db: Session = Depends(get_db)):
-    frontend_base = os.getenv("FRONTEND_URL")
+async def strava_callback(code: str, state: str = "", scope: str = "", request: Request = None, db: Session = Depends(get_db)):
+    import urllib.parse
+    frontend_base = None
+    if state:
+        try:
+            unquoted_state = urllib.parse.unquote(state)
+            if unquoted_state.startswith("http://") or unquoted_state.startswith("https://"):
+                frontend_base = unquoted_state
+        except Exception as e:
+            print(f"Failed to parse state param: {e}")
+            
+    if not frontend_base:
+        frontend_base = os.getenv("FRONTEND_URL")
+        
     if not frontend_base and request:
         referer = request.headers.get("referer")
         if referer and "localhost" not in referer and "127.0.0.1" not in referer:
-            from urllib.parse import urlparse
-            parsed = urlparse(referer)
+            parsed = urllib.parse.urlparse(referer)
             frontend_base = f"{parsed.scheme}://{parsed.netloc}"
             
     if not frontend_base:

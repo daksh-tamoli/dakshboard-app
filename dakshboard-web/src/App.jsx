@@ -99,7 +99,8 @@ function App() {
   }, [])
 
   const handleStravaAuth = () => {
-    window.location.href = `${API_BASE_URL}/api/auth/login`
+    const origin = encodeURIComponent(window.location.origin)
+    window.location.href = `${API_BASE_URL}/api/auth/login?frontend_origin=${origin}`
   }
 
   const handleLogout = () => {
