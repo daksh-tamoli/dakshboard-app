@@ -87,7 +87,7 @@ def read_workout(workout_id: int, db: Session = Depends(get_db)):
 #created using ai
 @app.get("/api/auth/login")
 def login_to_strava(request: Request):
-    scopes = "activity:read_all,profile:read_all"
+    scopes = "read,activity:read_all,profile:read_all"
     backend_base = os.getenv("BACKEND_URL")
     
     if not backend_base:
