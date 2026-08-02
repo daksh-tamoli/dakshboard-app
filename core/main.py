@@ -97,12 +97,14 @@ def login_to_strava(request: Request):
         
     backend_base = backend_base.rstrip("/")
     redirect_uri = f"{backend_base}/api/auth/callback"
+    import urllib.parse
+    encoded_redirect = urllib.parse.quote(redirect_uri, safe='')
     
     strava_auth_url = (
         f"https://www.strava.com/oauth/authorize"
         f"?client_id={os.getenv('STRAVA_CLIENT_ID')}"
         f"&response_type=code"
-        f"&redirect_uri={redirect_uri}"
+        f"&redirect_uri={encoded_redirect}"
         f"&approval_prompt=force"
         f"&scope={scopes}"
     )
