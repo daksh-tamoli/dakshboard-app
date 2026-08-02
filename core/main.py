@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, sessionmaker
 import httpx 
@@ -86,9 +86,16 @@ def read_workout(workout_id: int, db: Session = Depends(get_db)):
 
 #created using ai
 @app.get("/api/auth/login")
-def login_to_strava():
+def login_to_strava(request: Request):
     scopes = "activity:read_all,profile:read_all"
-    backend_base = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+    backend_base = os.getenv("BACKEND_URL")
+    
+    if not backend_base:
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("x-forwarded-host", request.url.netloc)
+        backend_base = f"{scheme}://{host}"
+        
+    backend_base = backend_base.rstrip("/")
     redirect_uri = f"{backend_base}/api/auth/callback"
     
     strava_auth_url = (
@@ -103,8 +110,19 @@ def login_to_strava():
 
 
 @app.get("/api/auth/callback")
-async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_db)):
-    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+async def strava_callback(code: str, scope: str = "", request: Request = None, db: Session = Depends(get_db)):
+    frontend_base = os.getenv("FRONTEND_URL")
+    if not frontend_base and request:
+        referer = request.headers.get("referer")
+        if referer and "localhost" not in referer and "127.0.0.1" not in referer:
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            frontend_base = f"{parsed.scheme}://{parsed.netloc}"
+            
+    if not frontend_base:
+        frontend_base = "http://localhost:5173"
+        
+    frontend_base = frontend_base.rstrip("/")
     token_url = "https://www.strava.com/oauth/token"
     payload = {
         "client_id": os.getenv("STRAVA_CLIENT_ID"),
