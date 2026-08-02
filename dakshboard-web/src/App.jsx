@@ -60,6 +60,8 @@ function App() {
     }
   })
   
+  const [showTroubleshootModal, setShowTroubleshootModal] = useState(false)
+  
   // STATE DEFINITIONS
   const [selectedMonth, setSelectedMonth] = useState('All')
   const [selectedType, setSelectedType] = useState('All')
@@ -77,6 +79,8 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const athleteParam = params.get('athlete')
+    const authStatus = params.get('auth')
+    const reasonParam = params.get('reason')
 
     if (athleteParam) {
       try {
@@ -88,11 +92,16 @@ function App() {
       }
     }
 
-    if (params.get('auth') === 'success') {
+    if (authStatus === 'success') {
       setAuthBanner({ type: 'success', text: 'Successfully authenticated with Strava and imported latest workouts!' })
       window.history.replaceState({}, document.title, window.location.pathname)
-    } else if (params.get('auth') === 'error') {
-      setAuthBanner({ type: 'error', text: 'Strava authentication failed. Please try again.' })
+    } else if (authStatus === 'error') {
+      const decodedReason = reasonParam ? decodeURIComponent(reasonParam) : 'The backend or Strava returned an authorization error during token exchange.'
+      setAuthBanner({ 
+        type: 'error', 
+        text: 'Strava authentication failed.',
+        reason: decodedReason
+      })
       window.history.replaceState({}, document.title, window.location.pathname)
     }
     fetchWorkouts()
@@ -314,7 +323,26 @@ function App() {
             alignItems: 'center',
             color: authBanner.type === 'success' ? '#69f0ae' : '#ff8a80'
           }}>
-            <span>{authBanner.text}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <span>{authBanner.text}</span>
+              {authBanner.type === 'error' && (
+                <button
+                  onClick={() => setShowTroubleshootModal(true)}
+                  style={{
+                    backgroundColor: '#f44336',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '0.35rem 0.75rem',
+                    fontSize: '0.8rem',
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Why did it fail? View Troubleshooting Guide
+                </button>
+              )}
+            </div>
             <button 
               onClick={() => setAuthBanner(null)} 
               style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 'bold' }}
@@ -517,6 +545,53 @@ function App() {
               ) : <p style={{ color: '#666' }}>No lap data saved for this activity.</p>}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* TROUBLESHOOTING GUIDE MODAL */}
+      {showTroubleshootModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: '1rem' }}>
+          <div style={{ backgroundColor: '#181818', borderRadius: '12px', width: '90vw', maxWidth: '750px', maxHeight: '90vh', padding: '2rem', overflowY: 'auto', border: '1px solid #ff4444' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid #333', pb: '1rem' }}>
+              <div>
+                <h2 style={{ margin: 0, color: '#ff4444' }}>Authentication Troubleshooting Guide</h2>
+                <p style={{ color: '#aaa', margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>Detailed diagnostic insights & solution checklist</p>
+              </div>
+              <button onClick={() => setShowTroubleshootModal(false)} style={{ backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.5rem 1rem', cursor: 'pointer' }}>Close</button>
+            </div>
+
+            <div style={{ backgroundColor: '#222', padding: '1rem', borderRadius: '8px', borderLeft: '4px solid #ff4444', marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '0.75rem', color: '#888', fontWeight: 'bold' }}>EXACT BACKEND ERROR DETAILS:</div>
+              <div style={{ fontSize: '0.9rem', color: '#ff8a80', fontFamily: 'monospace', marginTop: '0.35rem', wordBreak: 'break-all' }}>
+                {authBanner?.reason || 'No specific error detail returned.'}
+              </div>
+            </div>
+
+            <h3 style={{ color: '#FC4C02', fontSize: '1rem', marginBottom: '0.75rem' }}>How to resolve this issue:</h3>
+            <ol style={{ color: '#ccc', fontSize: '0.9rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong>Render Environment Variables Check:</strong><br />
+                Ensure your Render service has <code>STRAVA_CLIENT_ID</code> and <code>STRAVA_CLIENT_SECRET</code> defined under <em>Dashboard &gt; Environment Variables</em>.
+              </li>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong>Verify Strava API Secret:</strong><br />
+                Double check your Strava Client Secret on <a href="https://www.strava.com/settings/api" target="_blank" rel="noreferrer" style={{ color: '#FC4C02' }}>strava.com/settings/api</a> to ensure no extra spaces or missing characters.
+              </li>
+              <li style={{ marginBottom: '0.75rem' }}>
+                <strong>Strava Callback Domain:</strong><br />
+                In Strava API settings, set <em>Authorization Callback Domain</em> to <code>dakshboard-app.onrender.com</code>.
+              </li>
+            </ol>
+
+            <div style={{ marginTop: '1.5rem', textAlign: 'right' }}>
+              <button 
+                onClick={() => { setShowTroubleshootModal(false); handleStravaAuth(); }}
+                style={{ backgroundColor: '#FC4C02', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.75rem 1.5rem', fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                Retry Strava Login Now
+              </button>
+            </div>
           </div>
         </div>
       )}

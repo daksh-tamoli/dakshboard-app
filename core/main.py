@@ -141,10 +141,17 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
         frontend_base = "http://localhost:5173"
         
     frontend_base = frontend_base.rstrip("/")
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        err_reason = urllib.parse.quote("Missing STRAVA_CLIENT_ID or STRAVA_CLIENT_SECRET in Render Environment Variables.")
+        return RedirectResponse(url=f"{frontend_base}/?auth=error&reason={err_reason}")
+
     token_url = "https://www.strava.com/oauth/token"
     payload = {
-        "client_id": os.getenv("STRAVA_CLIENT_ID"),
-        "client_secret": os.getenv("STRAVA_CLIENT_SECRET"),
+        "client_id": client_id,
+        "client_secret": client_secret,
         "code": code,
         "grant_type": "authorization_code"
     }
@@ -153,8 +160,9 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
         response = await client.post(token_url, data=payload)
         
     if response.status_code != 200:
-        print(f"STRAVA OAUTH HANDSHAKE FAILED: {response.text}")
-        return RedirectResponse(url=f"{frontend_base}/?auth=error")
+        print(f"STRAVA OAUTH HANDSHAKE FAILED ({response.status_code}): {response.text}")
+        err_reason = urllib.parse.quote(f"Strava token exchange failed ({response.status_code}): {response.text}")
+        return RedirectResponse(url=f"{frontend_base}/?auth=error&reason={err_reason}")
         
     strava_data = response.json()
     access_token = strava_data.get("access_token")
