@@ -1,1 +1,22 @@
+# Environments & Virtual Envs
+venv/
 .env
+core/.env
+
+# Databases
+*.db
+core/*.db
+
+# Node dependencies & builds
+node_modules/
+dakshboard-web/node_modules/
+dakshboard-web/dist/
+
+# Python Cache
+__pycache__/
+core/__pycache__/
+*.pyc
+
+# System files
+.DS_Store
+*.log

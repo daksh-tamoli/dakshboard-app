@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, sessionmaker
 import httpx 
 
-from models import Base, engine, Workout 
+from models import Base, engine, Workout, User 
 from schemas import WorkoutCreate
 import os
 from dotenv import load_dotenv, set_key, find_dotenv
@@ -119,8 +119,31 @@ async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_
     strava_data = response.json()
     access_token = strava_data.get("access_token")
     refresh_token = strava_data.get("refresh_token")
+    athlete_data = strava_data.get("athlete", {})
+    athlete_id = athlete_data.get("id")
+
+    # Save/Update User in Database for Multi-User Support
+    if athlete_id:
+        existing_user = db.query(User).filter(User.strava_id == athlete_id).first()
+        if existing_user:
+            existing_user.access_token = access_token
+            existing_user.refresh_token = refresh_token
+            existing_user.firstname = athlete_data.get("firstname")
+            existing_user.lastname = athlete_data.get("lastname")
+            existing_user.profile = athlete_data.get("profile")
+        else:
+            new_user = User(
+                strava_id=athlete_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                firstname=athlete_data.get("firstname"),
+                lastname=athlete_data.get("lastname"),
+                profile=athlete_data.get("profile")
+            )
+            db.add(new_user)
+        db.commit()
     
-    # 3. Persist tokens into .env file and environment
+    # Also persist default tokens into .env file if available
     ENV_PATH = Path(__file__).resolve().parent / ".env"
     if ENV_PATH.exists():
         if access_token:
@@ -129,16 +152,14 @@ async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_
         if refresh_token:
             set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", refresh_token)
             os.environ["STRAVA_REFRESH_TOKEN"] = refresh_token
-        print("Successfully updated .env with Strava tokens.")
         
-    # 4. Trigger automatic workout ingestion
+    # Trigger automatic workout ingestion
     try:
-        await sync_latest_strava_runs(db=db)
+        await sync_latest_strava_runs(strava_id=athlete_id, db=db)
     except Exception as e:
         print(f"Auto-sync during callback encountered error: {e}")
         
-    # 5. Redirect browser back to React dashboard frontend with success status and athlete info
-    athlete_data = strava_data.get("athlete", {})
+    # Redirect browser back to React dashboard frontend with success status and athlete info
     import urllib.parse
     athlete_param = urllib.parse.quote(json.dumps(athlete_data)) if athlete_data else ""
     return RedirectResponse(url=f"http://localhost:5173/?auth=success&athlete={athlete_param}")
@@ -147,23 +168,26 @@ async def strava_callback(code: str, scope: str = "", db: Session = Depends(get_
 
 
 @app.get("/api/strava/sync-latest")
-async def sync_latest_strava_runs(db: Session = Depends(get_db)):
-
-    
+async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(get_db)):
     ENV_PATH = Path(__file__).resolve().parent / ".env"
-    if not ENV_PATH.exists():
-        print(f"CRITICAL SYSTEM ERROR: .env file NOT FOUND at {ENV_PATH}")
-        raise HTTPException(status_code=500, detail="Missing .env file.")
-    load_dotenv(ENV_PATH, override=True)
+    if ENV_PATH.exists():
+        load_dotenv(ENV_PATH, override=True)
 
     client_id = os.getenv("STRAVA_CLIENT_ID")
     client_secret = os.getenv("STRAVA_CLIENT_SECRET")
-    refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
+    
+    # Resolve target user token from Database or fallback to .env
+    target_user = None
+    if strava_id:
+        target_user = db.query(User).filter(User.strava_id == strava_id).first()
+    if not target_user:
+        target_user = db.query(User).order_by(User.id.desc()).first()
 
+    refresh_token = target_user.refresh_token if (target_user and target_user.refresh_token) else os.getenv("STRAVA_REFRESH_TOKEN")
 
     if not all([client_id, client_secret, refresh_token]):
-        print("CRITICAL ERROR: Missing Strava credentials. Check your .env file.")
-        raise HTTPException(status_code=500, detail="Missing Strava OAuth credentials.")
+        print("CRITICAL ERROR: Missing Strava credentials. Please log in first.")
+        raise HTTPException(status_code=500, detail="Missing Strava OAuth credentials. Please log in first.")
 
     async with httpx.AsyncClient() as client:
         auth_url = "https://www.strava.com/oauth/token"
@@ -177,21 +201,23 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
         auth_response = await client.post(auth_url, data=auth_payload)
         
         if auth_response.status_code != 200:
-            # Printing the reason Strava rejected the refresh
             print(f"STRAVA AUTH FAILURE: {auth_response.text}")
             raise HTTPException(status_code=401, detail="Failed to refresh Strava access token.")
             
         auth_data = auth_response.json()
         active_access_token = auth_data.get("access_token")
         new_refresh_token = auth_data.get("refresh_token")
-        print("Token refreshed successfully. Fetching activities...")
         
-        if new_refresh_token:
+        if target_user:
+            target_user.access_token = active_access_token
+            if new_refresh_token:
+                target_user.refresh_token = new_refresh_token
+            db.commit()
+
+        if ENV_PATH.exists() and new_refresh_token:
             set_key(str(ENV_PATH), "STRAVA_ACCESS_TOKEN", active_access_token)
             set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", new_refresh_token)
-            os.environ["STRAVA_ACCESS_TOKEN"] = active_access_token
-            os.environ["STRAVA_REFRESH_TOKEN"] = new_refresh_token
-            print(f"Successfully rotated tokens and saved to: {ENV_PATH}")
+
         headers = {"Authorization": f"Bearer {active_access_token}"}
         strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=200"
         
@@ -203,9 +229,9 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
             
         raw_activities = response.json()
         synced_workouts = []
+        user_db_id = target_user.id if target_user else 1
         
         for act in raw_activities:
-            
             act_type = act.get("type", "Other")
             distance_km = round(act.get("distance", 0.0) / 1000.0, 2)
             raw_date = act.get("start_date_local")
@@ -213,25 +239,22 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
             moving_time = act.get("moving_time", 0)
             
             existing = db.query(Workout).filter(
+                Workout.user_id == user_db_id,
                 Workout.total_distance == distance_km,
                 Workout.moving_time == moving_time
             ).first()
             
             if not existing:
-                # FETCH ALL STREAMS
                 streams_url = f"https://www.strava.com/api/v3/activities/{act['id']}/streams?keys=time,heartrate,velocity_smooth,altitude,cadence&key_by_type=true"
                 stream_res = await client.get(streams_url, headers=headers)
                 streams_data = stream_res.json() if stream_res.status_code == 200 else {}
                 
-                # FETCH LAPS
                 laps_url = f"https://www.strava.com/api/v3/activities/{act['id']}/laps"
                 laps_res = await client.get(laps_url, headers=headers)
                 laps_data = laps_res.json() if laps_res.status_code == 200 else []
 
                 db_workout = Workout(
-                    # MAP THE NEW TYPE FIELD
                     type=act_type,
-                    
                     date=workout_date,
                     total_distance=distance_km,
                     moving_time=moving_time,
@@ -240,7 +263,7 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
                     average_heartrate=act.get("average_heartrate"),
                     max_heartrate=act.get("max_heartrate"),
                     average_cadence=act.get("average_cadence"),
-                    user_id=1,
+                    user_id=user_db_id,
                     time_stream=json.dumps(streams_data.get('time', {}).get('data')) if 'time' in streams_data else None,
                     heartrate_stream=json.dumps(streams_data.get('heartrate', {}).get('data')) if 'heartrate' in streams_data else None,
                     pace_stream=json.dumps(streams_data.get('velocity_smooth', {}).get('data')) if 'velocity_smooth' in streams_data else None,
@@ -254,7 +277,6 @@ async def sync_latest_strava_runs(db: Session = Depends(get_db)):
                     
         db.commit()
         print(f"Sync complete. {len(synced_workouts)} new workouts saved.")
-
         return {"status": "success", "new_workouts": len(synced_workouts)}
 
         
