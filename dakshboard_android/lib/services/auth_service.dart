@@ -1,9 +1,11 @@
 // ============================================================
-// DAKSHboard — Auth Service
-// Strava OAuth using flutter_web_auth_2 (in-app browser)
+// DAKSHboard — Auth Service (Rewritten for reliability)
+// OAuth: gets strava_id from callback, then fetches profile via API
 // ============================================================
 
 import 'dart:convert';
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:dakshboard_android/models/athlete.dart';
@@ -19,70 +21,129 @@ class AuthService {
 
   final _api = ApiService();
 
-  // Trigger Strava OAuth flow via in-app browser
-  // Returns the authenticated Athlete on success
+  // ─── Main Login Flow ───────────────────────────────────────
   Future<Athlete?> loginWithStrava() async {
     const callbackScheme = 'com.dakshtamoli.dakshboard';
-
-    // The backend will redirect back to our Render backend after auth
-    // but we use the state param to carry our own redirect target
-    // For mobile, we intercept the callback using the custom scheme
     final loginUrl = _api.stravaLoginUrlWithOrigin('$callbackScheme://oauth/callback');
 
+    debugPrint('[Auth] Opening Strava login: $loginUrl');
+
+    String result;
     try {
-      final result = await FlutterWebAuth2.authenticate(
+      result = await FlutterWebAuth2.authenticate(
         url: loginUrl,
         callbackUrlScheme: callbackScheme,
       );
-
-      // The callback URL will contain auth=success&athlete=...
-      final uri = Uri.parse(result);
-      final athleteParam = uri.queryParameters['athlete'];
-
-      if (athleteParam != null) {
-        final athleteJson = jsonDecode(Uri.decodeComponent(athleteParam));
-        final athlete = Athlete.fromJson(athleteJson);
-        await saveAthlete(athlete);
-        return athlete;
-      }
     } catch (e) {
-      throw AuthException('Strava authentication failed: $e');
+      debugPrint('[Auth] FlutterWebAuth2 error: $e');
+      throw AuthException('Browser authentication failed: $e');
     }
-    return null;
-  }
 
-  // Save athlete to secure storage
-  Future<void> saveAthlete(Athlete athlete) async {
-    await _storage.write(key: _athleteKey, value: jsonEncode(athlete.toJson()));
-    await _storage.write(key: _stravaIdKey, value: athlete.id.toString());
-  }
+    debugPrint('[Auth] Callback received: $result');
 
-  // Load stored athlete
-  Future<Athlete?> getStoredAthlete() async {
-    final json = await _storage.read(key: _athleteKey);
-    if (json == null) return null;
+    // Parse the callback URL — only need strava_id (simple integer)
+    final uri = Uri.parse(result);
+    final auth = uri.queryParameters['auth'];
+
+    if (auth != 'success') {
+      final reason = uri.queryParameters['reason'] ?? 'Unknown error';
+      debugPrint('[Auth] Auth failed: $reason');
+      throw AuthException('Strava authorization failed: $reason');
+    }
+
+    final stravaIdStr = uri.queryParameters['strava_id'];
+    if (stravaIdStr == null) {
+      debugPrint('[Auth] No strava_id in callback. Full URI: $result');
+      throw AuthException('Authentication succeeded but no strava_id received.');
+    }
+
+    final stravaId = int.tryParse(stravaIdStr);
+    if (stravaId == null) {
+      throw AuthException('Invalid strava_id received: $stravaIdStr');
+    }
+
+    debugPrint('[Auth] Got strava_id: $stravaId — fetching profile from backend...');
+
+    // Fetch full athlete profile from backend database (reliable, no URL encoding)
     try {
+      final dio = Dio(BaseOptions(
+        baseUrl: ApiService.baseUrl,
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 15),
+      ));
+      final response = await dio.get('/api/auth/me', queryParameters: {'strava_id': stravaId});
+      final data = response.data as Map<String, dynamic>;
+      debugPrint('[Auth] Got athlete data: $data');
+
+      final athlete = Athlete(
+        id: data['id'] as int,
+        firstname: data['firstname'] as String? ?? '',
+        lastname: data['lastname'] as String? ?? '',
+        profileUrl: data['profile'] as String?,
+      );
+
+      await saveAthlete(athlete);
+      return athlete;
+    } on DioException catch (e) {
+      debugPrint('[Auth] Failed to fetch athlete profile: ${e.message}');
+      // Fallback: create a minimal athlete with just the strava_id so they can at least log in
+      final fallbackAthlete = Athlete(
+        id: stravaId,
+        firstname: 'Athlete',
+        lastname: '',
+        profileUrl: null,
+      );
+      await saveAthlete(fallbackAthlete);
+      return fallbackAthlete;
+    }
+  }
+
+  // ─── Storage ───────────────────────────────────────────────
+
+  Future<void> saveAthlete(Athlete athlete) async {
+    try {
+      await _storage.write(key: _athleteKey, value: jsonEncode(athlete.toJson()));
+      await _storage.write(key: _stravaIdKey, value: athlete.id.toString());
+      debugPrint('[Auth] Athlete saved: ${athlete.id}');
+    } catch (e) {
+      debugPrint('[Auth] Storage write error, retrying after clear: $e');
+      try {
+        await _storage.deleteAll();
+        await _storage.write(key: _athleteKey, value: jsonEncode(athlete.toJson()));
+        await _storage.write(key: _stravaIdKey, value: athlete.id.toString());
+      } catch (e2) {
+        debugPrint('[Auth] Storage retry failed: $e2');
+      }
+    }
+  }
+
+  Future<Athlete?> getStoredAthlete() async {
+    try {
+      final json = await _storage.read(key: _athleteKey);
+      if (json == null) return null;
       return Athlete.fromJson(jsonDecode(json));
+    } catch (e) {
+      debugPrint('[Auth] Storage read error: $e');
+      try { await _storage.deleteAll(); } catch (_) {}
+      return null;
+    }
+  }
+
+  Future<int?> getStravaId() async {
+    try {
+      final val = await _storage.read(key: _stravaIdKey);
+      return val != null ? int.tryParse(val) : null;
     } catch (_) {
       return null;
     }
   }
 
-  // Get stored strava_id
-  Future<int?> getStravaId() async {
-    final val = await _storage.read(key: _stravaIdKey);
-    return val != null ? int.tryParse(val) : null;
-  }
-
-  // Logout — clear all stored credentials
   Future<void> logout() async {
-    await _storage.deleteAll();
+    try { await _storage.deleteAll(); } catch (_) {}
   }
 
-  // Check if user is logged in
   Future<bool> isLoggedIn() async {
-    final athlete = await getStoredAthlete();
-    return athlete != null;
+    return (await getStoredAthlete()) != null;
   }
 }
 

@@ -7,13 +7,13 @@ import 'package:dio/dio.dart';
 import 'package:dakshboard_android/models/workout.dart';
 
 class ApiService {
-  static const String _baseUrl = 'https://dakshboard-app.onrender.com';
+  static const String baseUrl = 'https://dakshboard-app.onrender.com';
 
   late final Dio _dio;
 
   ApiService() {
     _dio = Dio(BaseOptions(
-      baseUrl: _baseUrl,
+      baseUrl: baseUrl,
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 15),
       headers: {'Content-Type': 'application/json'},
@@ -59,7 +59,7 @@ class ApiService {
   }
 
   // Build Strava OAuth login URL (used by auth service)
-  String get stravaLoginUrl => '$_baseUrl/api/auth/login';
+  String get stravaLoginUrl => '$baseUrl/api/auth/login';
 
   // Build full OAuth login URL with frontend origin
   String stravaLoginUrlWithOrigin(String frontendOrigin) =>

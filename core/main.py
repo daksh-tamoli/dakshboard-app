@@ -208,11 +208,10 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
         print(f"Auto-sync during callback encountered error: {e}")
         
     # Redirect back to mobile app or web frontend
+    # For mobile: use simple strava_id only (no JSON encoding issues)
     import urllib.parse
-    athlete_param = urllib.parse.quote(json.dumps(athlete_data)) if athlete_data else ""
     if "://" in frontend_base and not (frontend_base.startswith("http://") or frontend_base.startswith("https://")):
-        sep = "&" if "?" in frontend_base else "?"
-        redirect_url = f"{frontend_base}{sep}auth=success&athlete={athlete_param}"
+        redirect_url = f"{frontend_base}?auth=success&strava_id={athlete_id}"
         html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -230,24 +229,36 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
 <body>
     <div class="card">
         <div class="icon">⚡</div>
-        <h2>Authentication Complete!</h2>
+        <h2>Authenticated!</h2>
         <p>Opening DAKSHboard app...</p>
         <a id="app-link" href="{redirect_url}" class="btn">Open DAKSHboard</a>
     </div>
     <script>
         window.location.href = "{redirect_url}";
-        setTimeout(function() {{
-            document.getElementById('app-link').click();
-        }}, 300);
+        setTimeout(function() {{ document.getElementById('app-link').click(); }}, 200);
     </script>
 </body>
 </html>"""
         return HTMLResponse(content=html_content)
     else:
+        athlete_param = urllib.parse.quote(json.dumps(athlete_data)) if athlete_data else ""
         redirect_url = f"{frontend_base.rstrip('/')}/?auth=success&athlete={athlete_param}"
         return RedirectResponse(url=redirect_url)
 
 
+@app.get("/api/auth/me")
+def get_me(strava_id: int, db: Session = Depends(get_db)):
+    """Return stored athlete profile by strava_id — used by mobile app after OAuth"""
+    user = db.query(User).filter(User.strava_id == strava_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": user.strava_id,
+        "firstname": user.firstname or "",
+        "lastname": user.lastname or "",
+        "profile": user.profile or "",
+        "strava_id": user.strava_id,
+    }
 
 
 @app.get("/api/strava/sync-latest")
