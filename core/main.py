@@ -340,6 +340,7 @@ async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(g
         synced_workouts = []
         user_db_id = target_user.id if target_user else 1
         
+        stream_fetch_count = 0
         for act in raw_activities:
             act_type = act.get("type", "Other")
             distance_km = round(act.get("distance", 0.0) / 1000.0, 2)
@@ -354,13 +355,23 @@ async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(g
             ).first()
             
             if not existing:
-                streams_url = f"https://www.strava.com/api/v3/activities/{act['id']}/streams?keys=time,heartrate,velocity_smooth,altitude,cadence&key_by_type=true"
-                stream_res = await client.get(streams_url, headers=headers)
-                streams_data = stream_res.json() if stream_res.status_code == 200 else {}
-                
-                laps_url = f"https://www.strava.com/api/v3/activities/{act['id']}/laps"
-                laps_res = await client.get(laps_url, headers=headers)
-                laps_data = laps_res.json() if laps_res.status_code == 200 else []
+                streams_data = {}
+                laps_data = []
+                # Fetch streams/laps only for top 3 newest workouts to avoid rate limits
+                if stream_fetch_count < 3:
+                    try:
+                        streams_url = f"https://www.strava.com/api/v3/activities/{act['id']}/streams?keys=time,heartrate,velocity_smooth,altitude,cadence&key_by_type=true"
+                        stream_res = await client.get(streams_url, headers=headers)
+                        if stream_res.status_code == 200:
+                            streams_data = stream_res.json()
+                            stream_fetch_count += 1
+                        
+                        laps_url = f"https://www.strava.com/api/v3/activities/{act['id']}/laps"
+                        laps_res = await client.get(laps_url, headers=headers)
+                        if laps_res.status_code == 200:
+                            laps_data = laps_res.json()
+                    except Exception as err:
+                        print(f"Error fetching telemetry for activity {act.get('id')}: {err}")
 
                 db_workout = Workout(
                     type=act_type,
