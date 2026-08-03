@@ -213,9 +213,39 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
     if "://" in frontend_base and not (frontend_base.startswith("http://") or frontend_base.startswith("https://")):
         sep = "&" if "?" in frontend_base else "?"
         redirect_url = f"{frontend_base}{sep}auth=success&athlete={athlete_param}"
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>DAKSHboard Authentication</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #121212; color: #ffffff; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; padding: 20px; }}
+        .card {{ background: #1e1e1e; border: 1px solid #2a2a2a; border-radius: 16px; padding: 32px; max-width: 360px; width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }}
+        .icon {{ font-size: 48px; margin-bottom: 16px; }}
+        h2 {{ margin: 0 0 8px 0; font-size: 22px; color: #ffffff; }}
+        p {{ color: #aaaaaa; font-size: 14px; margin-bottom: 24px; }}
+        .btn {{ display: inline-block; width: 100%; padding: 14px 0; background: #FC4C02; color: #ffffff; text-decoration: none; font-weight: bold; border-radius: 10px; font-size: 16px; box-sizing: border-box; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">⚡</div>
+        <h2>Authentication Complete!</h2>
+        <p>Opening DAKSHboard app...</p>
+        <a id="app-link" href="{redirect_url}" class="btn">Open DAKSHboard</a>
+    </div>
+    <script>
+        window.location.href = "{redirect_url}";
+        setTimeout(function() {{
+            document.getElementById('app-link').click();
+        }}, 300);
+    </script>
+</body>
+</html>"""
+        return HTMLResponse(content=html_content)
     else:
         redirect_url = f"{frontend_base.rstrip('/')}/?auth=success&athlete={athlete_param}"
-    return RedirectResponse(url=redirect_url)
+        return RedirectResponse(url=redirect_url)
 
 
 
