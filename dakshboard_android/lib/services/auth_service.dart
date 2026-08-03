@@ -27,7 +27,7 @@ class AuthService {
     // The backend will redirect back to our Render backend after auth
     // but we use the state param to carry our own redirect target
     // For mobile, we intercept the callback using the custom scheme
-    final loginUrl = _api.stravaLoginUrl;
+    final loginUrl = _api.stravaLoginUrlWithOrigin('$callbackScheme://oauth/callback');
 
     try {
       final result = await FlutterWebAuth2.authenticate(

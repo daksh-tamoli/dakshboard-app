@@ -123,7 +123,7 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
     if state:
         try:
             unquoted_state = urllib.parse.unquote(state)
-            if unquoted_state.startswith("http://") or unquoted_state.startswith("https://"):
+            if "://" in unquoted_state:
                 frontend_base = unquoted_state
         except Exception as e:
             print(f"Failed to parse state param: {e}")
@@ -207,10 +207,15 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
     except Exception as e:
         print(f"Auto-sync during callback encountered error: {e}")
         
-    # Redirect browser back to React dashboard frontend with success status and athlete info
+    # Redirect back to mobile app or web frontend
     import urllib.parse
     athlete_param = urllib.parse.quote(json.dumps(athlete_data)) if athlete_data else ""
-    return RedirectResponse(url=f"{frontend_base}/?auth=success&athlete={athlete_param}")
+    if "://" in frontend_base and not (frontend_base.startswith("http://") or frontend_base.startswith("https://")):
+        sep = "&" if "?" in frontend_base else "?"
+        redirect_url = f"{frontend_base}{sep}auth=success&athlete={athlete_param}"
+    else:
+        redirect_url = f"{frontend_base.rstrip('/')}/?auth=success&athlete={athlete_param}"
+    return RedirectResponse(url=redirect_url)
 
 
 
