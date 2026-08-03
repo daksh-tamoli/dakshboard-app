@@ -261,6 +261,21 @@ def get_me(strava_id: int, db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/auth/latest")
+def get_latest_user(db: Session = Depends(get_db)):
+    """Return the most recently authenticated athlete profile"""
+    user = db.query(User).order_by(User.id.desc()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No authenticated user found")
+    return {
+        "id": user.strava_id,
+        "firstname": user.firstname or "",
+        "lastname": user.lastname or "",
+        "profile": user.profile or "",
+        "strava_id": user.strava_id,
+    }
+
+
 @app.get("/api/strava/sync-latest")
 async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(get_db)):
     ENV_PATH = Path(__file__).resolve().parent / ".env"
