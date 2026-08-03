@@ -190,16 +190,7 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
             )
             db.add(new_user)
         db.commit()
-    
-    # Also persist default tokens into .env file if available
-    ENV_PATH = Path(__file__).resolve().parent / ".env"
-    if ENV_PATH.exists():
-        if access_token:
-            set_key(str(ENV_PATH), "STRAVA_ACCESS_TOKEN", access_token)
-            os.environ["STRAVA_ACCESS_TOKEN"] = access_token
-        if refresh_token:
-            set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", refresh_token)
-            os.environ["STRAVA_REFRESH_TOKEN"] = refresh_token
+        print(f"Successfully authenticated and stored user tokens in database for strava_id={athlete_id}")
         
     # Trigger automatic workout ingestion
     try:
@@ -322,10 +313,6 @@ async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(g
             if new_refresh_token:
                 target_user.refresh_token = new_refresh_token
             db.commit()
-
-        if ENV_PATH.exists() and new_refresh_token:
-            set_key(str(ENV_PATH), "STRAVA_ACCESS_TOKEN", active_access_token)
-            set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", new_refresh_token)
 
         headers = {"Authorization": f"Bearer {active_access_token}"}
         strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=200"
