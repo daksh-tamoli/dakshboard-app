@@ -14,7 +14,10 @@ import 'package:dakshboard_android/screens/workout_detail_screen.dart';
 import 'package:dakshboard_android/screens/gps_tracking_screen.dart';
 import 'package:dakshboard_android/screens/profile_screen.dart';
 import 'package:dakshboard_android/screens/settings_screen.dart';
+import 'dart:convert';
+import 'package:dakshboard_android/models/athlete.dart';
 import 'package:dakshboard_android/models/workout.dart';
+import 'package:dakshboard_android/providers/providers.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,8 +53,62 @@ final _router = GoRouter(
     GoRoute(path: '/gps', builder: (context, state) => const GpsTrackingScreen()),
     GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
     GoRoute(path: '/settings', builder: (context, state) => const SettingsScreen()),
+    GoRoute(
+      path: '/oauth/callback',
+      builder: (context, state) {
+        final athleteParam = state.uri.queryParameters['athlete'];
+        return OAuthCallbackHandler(athleteParam: athleteParam);
+      },
+    ),
   ],
 );
+
+class OAuthCallbackHandler extends ConsumerStatefulWidget {
+  final String? athleteParam;
+  const OAuthCallbackHandler({super.key, this.athleteParam});
+
+  @override
+  ConsumerState<OAuthCallbackHandler> createState() => _OAuthCallbackHandlerState();
+}
+
+class _OAuthCallbackHandlerState extends ConsumerState<OAuthCallbackHandler> {
+  @override
+  void initState() {
+    super.initState();
+    _processAuth();
+  }
+
+  Future<void> _processAuth() async {
+    if (widget.athleteParam != null && widget.athleteParam!.isNotEmpty) {
+      try {
+        final decodedJson = jsonDecode(Uri.decodeComponent(widget.athleteParam!));
+        final athlete = Athlete.fromJson(decodedJson);
+        final auth = ref.read(authServiceProvider);
+        await auth.saveAthlete(athlete);
+        ref.invalidate(athleteProvider);
+        if (mounted) {
+          context.go('/home');
+          return;
+        }
+      } catch (e) {
+        debugPrint('OAuth callback parse error: $e');
+      }
+    }
+    if (mounted) {
+      context.go('/login');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF121212),
+      body: Center(
+        child: CircularProgressIndicator(color: Color(0xFFFC4C02)),
+      ),
+    );
+  }
+}
 
 class DAKSHboardApp extends StatelessWidget {
   const DAKSHboardApp({super.key});

@@ -42,7 +42,7 @@ class AuthService {
       if (athleteParam != null) {
         final athleteJson = jsonDecode(Uri.decodeComponent(athleteParam));
         final athlete = Athlete.fromJson(athleteJson);
-        await _saveAthlete(athlete);
+        await saveAthlete(athlete);
         return athlete;
       }
     } catch (e) {
@@ -52,7 +52,7 @@ class AuthService {
   }
 
   // Save athlete to secure storage
-  Future<void> _saveAthlete(Athlete athlete) async {
+  Future<void> saveAthlete(Athlete athlete) async {
     await _storage.write(key: _athleteKey, value: jsonEncode(athlete.toJson()));
     await _storage.write(key: _stravaIdKey, value: athlete.id.toString());
   }
