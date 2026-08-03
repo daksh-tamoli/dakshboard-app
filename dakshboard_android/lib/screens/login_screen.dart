@@ -48,6 +48,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _handleLatestAccountSync() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final auth = ref.read(authServiceProvider);
+      final athlete = await auth.loginWithLatestAccount();
+      if (mounted) {
+        if (athlete != null) {
+          ref.invalidate(athleteProvider);
+          context.go('/home');
+        } else {
+          setState(() {
+            _errorMessage = 'No authorized Strava account found.';
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Please authorize in browser first.';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -143,7 +173,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     : const Icon(Icons.link_rounded, size: 22),
                 label: Text(_isLoading ? 'Connecting...' : 'Connect with Strava'),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
+              TextButton.icon(
+                onPressed: _isLoading ? null : _handleLatestAccountSync,
+                icon: const Icon(Icons.sync_rounded, size: 18, color: Color(0xFFFC4C02)),
+                label: const Text(
+                  'Already Authorized? Tap to Sync',
+                  style: TextStyle(color: Color(0xFFFC4C02), fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(height: 12),
               Text(
                 'We only read your workout data.\nYour data stays private.',
                 textAlign: TextAlign.center,
