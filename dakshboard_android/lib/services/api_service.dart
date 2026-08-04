@@ -76,6 +76,16 @@ class ApiService {
     }
   }
 
+  // Update manual Max HR
+  Future<int> updateMaxHr(int maxHr) async {
+    try {
+      final response = await _dio.put('/api/auth/me/max_hr', data: {'max_hr': maxHr});
+      return response.data['max_hr'] as int;
+    } on DioException catch (e) {
+      throw ApiException('Update failed: ${e.message}');
+    }
+  }
+
   // Build Strava OAuth login URL (used by auth service)
   String get stravaLoginUrl => '$baseUrl/api/auth/login';
 

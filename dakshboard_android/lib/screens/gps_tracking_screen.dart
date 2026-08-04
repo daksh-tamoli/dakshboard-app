@@ -23,6 +23,9 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
   final List<LatLng> _path = [];
   Position? _currentPosition;
   bool _isTracking = false;
+  bool _isPaused = false;
+  bool _isCountingDown = false;
+  int _countdownValue = 3;
   double _totalDistanceKm = 0;
   Timer? _durationTimer;
   Duration _elapsed = Duration.zero;
@@ -74,17 +77,42 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  void _startTracking() async {
+  void _initiateTracking() async {
     if (!_hasLocationPermission) {
       await _checkPermissions();
       if (!_hasLocationPermission) return;
     }
 
     setState(() {
-      _isTracking = true;
+      _isCountingDown = true;
+      _countdownValue = 3;
       _path.clear();
       _totalDistanceKm = 0;
       _elapsed = Duration.zero;
+      _isTracking = false;
+      _isPaused = false;
+    });
+
+    Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _countdownValue--;
+        if (_countdownValue == 0) {
+          timer.cancel();
+          _isCountingDown = false;
+          _startTracking();
+        }
+      });
+    });
+  }
+
+  void _startTracking() {
+    setState(() {
+      _isTracking = true;
+      _isPaused = false;
     });
 
     _durationTimer?.cancel();
@@ -101,7 +129,7 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
         ),
       ).listen(
         (position) {
-          if (!mounted) return;
+          if (!mounted || _isPaused) return;
 
           // Filter: ignore low-accuracy fixes
           if (position.accuracy > 20) return;
@@ -133,10 +161,26 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
     }
   }
 
+  void _pauseTracking() {
+    _durationTimer?.cancel();
+    setState(() => _isPaused = true);
+  }
+
+  void _resumeTracking() {
+    setState(() => _isPaused = false);
+    _durationTimer?.cancel();
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
+    });
+  }
+
   void _stopTracking() {
     _positionStream?.cancel();
     _durationTimer?.cancel();
-    setState(() => _isTracking = false);
+    setState(() {
+      _isTracking = false;
+      _isPaused = false;
+    });
     if (_totalDistanceKm > 0.05) _showSummaryDialog();
   }
 
@@ -179,8 +223,20 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Done', style: TextStyle(color: Color(0xFFFC4C02))),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pop(context);
+            },
+            child: const Text('Discard', style: TextStyle(color: Color(0xFF888888))),
+          ),
+          TextButton(
+            onPressed: () {
+              // TODO: Implement Save to Database logic here
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Activity Saved locally & ready for Strava sync')));
+              Navigator.pop(ctx);
+              Navigator.pop(context);
+            },
+            child: const Text('Save & Share', style: TextStyle(color: Color(0xFFFC4C02))),
           ),
         ],
       ),
@@ -233,8 +289,10 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
 
           // ── OpenStreetMap ───────────────────────────────────
           Expanded(
-            child: _hasLocationPermission
-                ? FlutterMap(
+            child: Stack(
+              children: [
+                _hasLocationPermission
+                    ? FlutterMap(
                     mapController: _mapController,
                     options: MapOptions(
                       initialCenter: _center,
@@ -304,28 +362,103 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
                       ],
                     ),
                   ),
+                
+                // Countdown Overlay
+                if (_isCountingDown)
+                  Container(
+                    color: Colors.black54,
+                    child: Center(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        transitionBuilder: (Widget child, Animation<double> animation) {
+                          return ScaleTransition(scale: animation, child: child);
+                        },
+                        child: Text(
+                          '$_countdownValue',
+                          key: ValueKey<int>(_countdownValue),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 120,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
 
-          // ── Start/Stop Button ───────────────────────────────
+          // ── Action Buttons ────────────────────────────────
           Container(
             padding: const EdgeInsets.all(24),
             color: const Color(0xFF121212),
-            child: ElevatedButton.icon(
-              onPressed: _isTracking ? _stopTracking : _startTracking,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _isTracking ? Colors.redAccent : _stravaOrange,
-                minimumSize: const Size(double.infinity, 56),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-              icon: Icon(_isTracking ? Icons.stop_rounded : Icons.play_arrow_rounded, size: 28),
-              label: Text(
-                _isTracking ? 'Stop Run' : 'Start Run',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-            ),
+            child: _buildActionButtons(),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    if (_isCountingDown) {
+      return const SizedBox(height: 56);
+    }
+
+    if (!_isTracking && !_isPaused) {
+      return ElevatedButton.icon(
+        onPressed: _initiateTracking,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _stravaOrange,
+          minimumSize: const Size(double.infinity, 56),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        icon: const Icon(Icons.play_arrow_rounded, size: 28),
+        label: const Text('Start Run', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      );
+    }
+
+    if (_isPaused) {
+      return Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _resumeTracking,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _stravaOrange,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.play_arrow_rounded, size: 28),
+              label: const Text('Resume', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _stopTracking,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.stop_rounded, size: 28),
+              label: const Text('Stop', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return ElevatedButton.icon(
+      onPressed: _pauseTracking,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.amber,
+        minimumSize: const Size(double.infinity, 56),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: const Icon(Icons.pause_rounded, size: 28),
+      label: const Text('Pause Run', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
     );
   }
 

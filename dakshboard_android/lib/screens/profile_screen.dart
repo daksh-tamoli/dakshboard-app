@@ -13,6 +13,50 @@ import 'package:dakshboard_android/models/workout.dart';
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
+  Future<void> _editMaxHr(BuildContext context, WidgetRef ref, int? currentMaxHr) async {
+    final controller = TextEditingController(text: currentMaxHr?.toString() ?? '');
+    final newMaxHr = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Edit Max HR', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'e.g. 195',
+            hintStyle: TextStyle(color: Color(0xFF888888)),
+            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFC4C02))),
+            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFC4C02))),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF888888))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, int.tryParse(controller.text)),
+            child: const Text('Save', style: TextStyle(color: Color(0xFFFC4C02))),
+          ),
+        ],
+      ),
+    );
+
+    if (newMaxHr != null && newMaxHr > 0) {
+      try {
+        final api = ref.read(apiProvider);
+        await api.updateMaxHr(newMaxHr);
+        ref.invalidate(athleteProvider);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final athleteAsync = ref.watch(athleteProvider);
@@ -91,6 +135,21 @@ class ProfileScreen extends ConsumerWidget {
                 ),
 
                 const SizedBox(height: 24),
+
+                // ── HR Settings ───────────────────────────
+                ListTile(
+                  tileColor: const Color(0xFF1E1E1E),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  leading: const Icon(Icons.favorite_rounded, color: Color(0xFFFC4C02)),
+                  title: const Text('Max Heart Rate', style: TextStyle(color: Colors.white)),
+                  subtitle: Text(
+                    athlete.maxHr != null ? '${athlete.maxHr} BPM' : 'Not Set',
+                    style: const TextStyle(color: Color(0xFF888888)),
+                  ),
+                  trailing: const Icon(Icons.edit, color: Color(0xFF666666)),
+                  onTap: () => _editMaxHr(context, ref, athlete.maxHr),
+                ),
+                const SizedBox(height: 12),
 
                 // ── Settings Link ─────────────────────────
                 ListTile(

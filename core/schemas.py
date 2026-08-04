@@ -34,3 +34,6 @@ class WorkoutOut(BaseModel):
 
     class Config:
         from_attributes = True  # Pydantic v2 (was orm_mode in v1)
+
+class MaxHrUpdate(BaseModel):
+    max_hr: int

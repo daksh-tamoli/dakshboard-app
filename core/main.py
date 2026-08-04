@@ -4,11 +4,12 @@ from sqlalchemy.orm import Session, sessionmaker
 import httpx 
 
 from models import Base, engine, Workout, User 
-from schemas import WorkoutCreate, WorkoutOut
+from schemas import WorkoutCreate, WorkoutOut, MaxHrUpdate
 from auth import create_access_token, get_current_user
 import os
 from dotenv import load_dotenv, set_key, find_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy import func
 import json
 from pathlib import Path
 
@@ -264,7 +265,15 @@ def get_me(current_user: User = Depends(get_current_user)):
         "lastname": current_user.lastname or "",
         "profile": current_user.profile or "",
         "strava_id": current_user.strava_id,
+        "max_hr": current_user.max_hr,
     }
+
+@app.put("/api/auth/me/max_hr")
+def update_max_hr(update: MaxHrUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Allow user to manually override their max HR"""
+    current_user.max_hr = update.max_hr
+    db.commit()
+    return {"status": "success", "max_hr": current_user.max_hr}
 
 
 @app.get("/api/auth/latest")
@@ -402,6 +411,23 @@ async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(g
                 synced_workouts.append(db_workout)
                     
         db.commit()
+
+        # Dynamic Max HR Calculation (Last 6 Months)
+        if target_user:
+            six_months_ago = datetime.utcnow() - timedelta(days=180)
+            max_hr_query = db.query(func.max(Workout.max_heartrate)).filter(
+                Workout.user_id == user_db_id,
+                Workout.date >= six_months_ago
+            ).scalar()
+            
+            if max_hr_query is not None:
+                current_max_hr = target_user.max_hr or 0
+                # Only override if the new workout HR is higher
+                if max_hr_query > current_max_hr:
+                    target_user.max_hr = int(max_hr_query)
+                    db.commit()
+                    print(f"Updated Max HR to {target_user.max_hr} based on 6-month history.")
+
         print(f"Sync complete. {len(synced_workouts)} new workouts saved.")
         return {"status": "success", "new_workouts": len(synced_workouts)}
 
