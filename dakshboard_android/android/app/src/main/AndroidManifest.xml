@@ -55,6 +55,9 @@
         <!-- Google Maps API Key -->
 
         <!-- Flutter embedding -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
     </application>
 
     <queries>
