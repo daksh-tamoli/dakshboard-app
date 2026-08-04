@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import httpx 
 
 from models import Base, engine, Workout, User 
-from schemas import WorkoutCreate
+from schemas import WorkoutCreate, WorkoutOut
 import os
 from dotenv import load_dotenv, set_key, find_dotenv
 from datetime import datetime
@@ -70,10 +70,15 @@ def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
     return db_workout
 
 #get framework
-#all workouts
-@app.get("/api/workouts/")
-def read_workouts(db: Session = Depends(get_db)):
-    workouts = db.query(Workout).all()
+#all workouts — filtered by strava_id if provided
+@app.get("/api/workouts/", response_model=list[WorkoutOut])
+def read_workouts(strava_id: int = None, db: Session = Depends(get_db)):
+    query = db.query(Workout)
+    if strava_id:
+        user = db.query(User).filter(User.strava_id == strava_id).first()
+        if user:
+            query = query.filter(Workout.user_id == user.id)
+    workouts = query.order_by(Workout.date.desc()).all()
     return workouts
 
 #single workout
@@ -190,7 +195,16 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
             )
             db.add(new_user)
         db.commit()
-        print(f"Successfully authenticated and stored user tokens in database for strava_id={athlete_id}")
+    
+    # Also persist default tokens into .env file if available
+    ENV_PATH = Path(__file__).resolve().parent / ".env"
+    if ENV_PATH.exists():
+        if access_token:
+            set_key(str(ENV_PATH), "STRAVA_ACCESS_TOKEN", access_token)
+            os.environ["STRAVA_ACCESS_TOKEN"] = access_token
+        if refresh_token:
+            set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", refresh_token)
+            os.environ["STRAVA_REFRESH_TOKEN"] = refresh_token
         
     # Trigger automatic workout ingestion
     try:
@@ -313,6 +327,10 @@ async def sync_latest_strava_runs(strava_id: int = None, db: Session = Depends(g
             if new_refresh_token:
                 target_user.refresh_token = new_refresh_token
             db.commit()
+
+        if ENV_PATH.exists() and new_refresh_token:
+            set_key(str(ENV_PATH), "STRAVA_ACCESS_TOKEN", active_access_token)
+            set_key(str(ENV_PATH), "STRAVA_REFRESH_TOKEN", new_refresh_token)
 
         headers = {"Authorization": f"Bearer {active_access_token}"}
         strava_activities_url = "https://www.strava.com/api/v3/athlete/activities?per_page=200"

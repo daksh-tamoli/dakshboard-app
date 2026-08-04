@@ -2,46 +2,35 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
-# THE TELEMETRY FIREWALL
-# When the phone sends JSON, Pydantic will check it against this class. 
-# If 'latitude' is missing or sent as a text string, Pydantic rejects the request with a 422 error.
-
-class WorkoutBase(BaseModel):
-    date: datetime
-    total_distance: float
-    moving_time: int
-    elapsed_time: int
-    total_elevation_gain: float
-    average_heartrate: Optional[float] = None
-    max_heartrate: Optional[float] = None
-    average_cadence: Optional[float] = None
-    
-    # NEW: Allow API to send/receive streams
-    time_stream: Optional[str] = None
-    heartrate_stream: Optional[str] = None
-    velocity_stream: Optional[str] = None
-    distance_stream: Optional[str] = None
-
-class TelemetryCreate(BaseModel):
-    timestamp: datetime
-    latitude: float
-    longitude: float
-    heart_rate: int
-
 class WorkoutCreate(BaseModel):
     date: datetime
     total_distance: float
     moving_time: int
     elapsed_time: int
     total_elevation_gain: float
-
     average_heartrate: Optional[float] = None
     max_heartrate: Optional[float] = None
     average_cadence: Optional[float] = None
 
-class Workout(WorkoutBase):
+class WorkoutOut(BaseModel):
+    """Response model returned by /api/workouts/ — matches Flutter Workout.fromJson() exactly"""
     id: int
-    user_id: int
+    type: Optional[str] = None
+    date: Optional[datetime] = None
+    total_distance: float = 0.0
+    moving_time: int = 0
+    elapsed_time: int = 0
+    total_elevation_gain: float = 0.0
+    average_heartrate: Optional[float] = None
+    max_heartrate: Optional[float] = None
+    average_cadence: Optional[float] = None
+    pace_stream: Optional[str] = None
+    heartrate_stream: Optional[str] = None
+    time_stream: Optional[str] = None
+    elevation_stream: Optional[str] = None
+    cadence_stream: Optional[str] = None
+    laps_data: Optional[str] = None
+    user_id: Optional[int] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # Pydantic v2 (was orm_mode in v1)
