@@ -2,6 +2,7 @@
 // DAKSHboard — Riverpod State Providers
 // ============================================================
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dakshboard_android/models/workout.dart';
 import 'package:dakshboard_android/models/athlete.dart';
@@ -54,7 +55,9 @@ class WorkoutsNotifier extends AsyncNotifier<List<Workout>> {
 
   Future<List<Workout>> _fetch() async {
     final api = ref.read(apiServiceProvider);
-    final workouts = await api.fetchWorkouts();
+    final auth = ref.read(authServiceProvider);
+    final stravaId = await auth.getStravaId();
+    final workouts = await api.fetchWorkouts(stravaId: stravaId);
     // Sort newest first
     workouts.sort((a, b) {
       if (a.date == null && b.date == null) return 0;
@@ -77,10 +80,12 @@ class WorkoutsNotifier extends AsyncNotifier<List<Workout>> {
     state = const AsyncValue.loading();
     try {
       await api.syncLatest(stravaId: stravaId);
-      state = await AsyncValue.guard(() => _fetch());
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
+    } catch (e) {
+      // 429 rate limit or other sync error — don't fail, just load cached workouts
+      debugPrint('Sync error (will load cached): $e');
     }
+    // Always load whatever workouts exist in the DB
+    state = await AsyncValue.guard(() => _fetch());
   }
 
   Future<void> deleteWorkout(int id) async {

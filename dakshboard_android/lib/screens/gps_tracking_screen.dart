@@ -29,6 +29,8 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
 
   static const _stravaOrange = Color(0xFFFC4C02);
 
+  bool _hasLocationPermission = false;
+
   @override
   void initState() {
     super.initState();
@@ -36,28 +38,58 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
   }
 
   Future<void> _checkPermissions() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permission required for GPS tracking')),
-        );
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please enable location services on your device')),
+          );
+        }
+        return;
       }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        if (mounted) {
+          setState(() {
+            _hasLocationPermission = true;
+          });
+        }
+        try {
+          final pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high,
+            timeLimit: const Duration(seconds: 5),
+          );
+          if (mounted) {
+            setState(() {
+              _currentPosition = pos;
+            });
+            _mapController?.animateCamera(
+              CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
+            );
+          }
+        } catch (_) {}
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permission required for GPS tracking')),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Permission error: $e');
     }
   }
 
   void _startTracking() async {
-    final hasPermission = await Geolocator.isLocationServiceEnabled();
-    if (!hasPermission) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enable location services')),
-        );
-      }
-      return;
+    if (!_hasLocationPermission) {
+      await _checkPermissions();
+      if (!_hasLocationPermission) return;
     }
 
     setState(() {
@@ -68,33 +100,54 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
       _elapsed = Duration.zero;
     });
 
+    _durationTimer?.cancel();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
     });
 
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 5,
-      ),
-    ).listen((position) {
-      if (!mounted) return;
-      final newPoint = LatLng(position.latitude, position.longitude);
+    try {
+      _positionStream?.cancel();
+      _positionStream = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 10, // Require 10m movement (was 3m — too sensitive to GPS noise)
+        ),
+      ).listen(
+        (position) {
+          if (!mounted) return;
 
-      setState(() {
-        if (_path.isNotEmpty) {
-          final dist = Geolocator.distanceBetween(
-            _path.last.latitude, _path.last.longitude,
-            newPoint.latitude, newPoint.longitude,
-          );
-          _totalDistanceKm += dist / 1000;
-        }
-        _path.add(newPoint);
-        _currentPosition = position;
-      });
+          // Discard low-accuracy GPS fixes (>20m accuracy = noisy)
+          if (position.accuracy > 20) return;
 
-      _mapController?.animateCamera(CameraUpdate.newLatLng(newPoint));
-    });
+          // Discard points where speed is below 0.8 m/s (stationary GPS drift)
+          // speed is null on some devices; only filter if we have a value
+          if (position.speed != null && position.speed! < 0.8 && _path.isNotEmpty) return;
+
+          final newPoint = LatLng(position.latitude, position.longitude);
+          setState(() {
+            if (_path.isNotEmpty) {
+              final dist = Geolocator.distanceBetween(
+                _path.last.latitude, _path.last.longitude,
+                newPoint.latitude, newPoint.longitude,
+              );
+              // Double-check: ignore jumps > 50m between consecutive points (GPS glitch)
+              if (dist < 50) {
+                _totalDistanceKm += dist / 1000;
+              }
+            }
+            _path.add(newPoint);
+            _currentPosition = position;
+          });
+
+          _mapController?.animateCamera(CameraUpdate.newLatLng(newPoint));
+        },
+        onError: (err) {
+          debugPrint('Location stream error: $err');
+        },
+      );
+    } catch (e) {
+      debugPrint('Error starting position stream: $e');
+    }
   }
 
   void _stopTracking() {
@@ -193,30 +246,65 @@ class _GpsTrackingScreenState extends State<GpsTrackingScreen> {
             ),
           ),
 
-          // ── Map ───────────────────────────────────────────
+          // ── Map / Live Tracking Display ───────────────────
           Expanded(
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: _currentPosition != null
-                    ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
-                    : const LatLng(28.6139, 77.2090), // Default: New Delhi
-                zoom: 16,
-              ),
-              onMapCreated: (controller) => _mapController = controller,
-              myLocationEnabled: true,
-              myLocationButtonEnabled: true,
-              mapType: MapType.normal,
-              polylines: _path.length > 1
-                  ? {
-                      Polyline(
-                        polylineId: const PolylineId('run_path'),
-                        points: _path,
-                        color: _stravaOrange,
-                        width: 5,
+            child: Container(
+              color: const Color(0xFF1E1E1E),
+              child: _hasLocationPermission
+                  ? GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target: _currentPosition != null
+                            ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+                            : const LatLng(28.6139, 77.2090),
+                        zoom: 16,
                       ),
-                    }
-                  : {},
-              style: _darkMapStyle,
+                      onMapCreated: (controller) {
+                        _mapController = controller;
+                        if (_currentPosition != null) {
+                          controller.animateCamera(
+                            CameraUpdate.newLatLng(LatLng(_currentPosition!.latitude, _currentPosition!.longitude)),
+                          );
+                        }
+                      },
+                      myLocationEnabled: true,
+                      myLocationButtonEnabled: true,
+                      mapType: MapType.normal,
+                      polylines: _path.length > 1
+                          ? {
+                              Polyline(
+                                polylineId: const PolylineId('run_path'),
+                                points: _path,
+                                color: _stravaOrange,
+                                width: 5,
+                              ),
+                            }
+                          : {},
+                      style: _darkMapStyle,
+                    )
+                  : Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.location_off_rounded, color: Color(0xFFFC4C02), size: 48),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'GPS Ready',
+                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Enable location permission to display live map',
+                            style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: _checkPermissions,
+                            icon: const Icon(Icons.my_location_rounded),
+                            label: const Text('Enable Location'),
+                          ),
+                        ],
+                      ),
+                    ),
             ),
           ),
 

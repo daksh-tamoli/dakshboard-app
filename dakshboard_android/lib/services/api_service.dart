@@ -27,12 +27,13 @@ class ApiService {
     ));
   }
 
-  // Fetch all workouts
-  Future<List<Workout>> fetchWorkouts() async {
+  // Fetch workouts for a specific user (filtered by strava_id)
+  Future<List<Workout>> fetchWorkouts({int? stravaId}) async {
     try {
-      final response = await _dio.get('/api/workouts/');
+      final Map<String, dynamic>? params = stravaId != null ? {'strava_id': stravaId} : null;
+      final response = await _dio.get('/api/workouts/', queryParameters: params);
       final List<dynamic> data = response.data;
-      return data.map((json) => Workout.fromJson(json)).toList();
+      return data.map((json) => Workout.fromJson(json as Map<String, dynamic>)).toList();
     } on DioException catch (e) {
       throw ApiException('Failed to load workouts: ${e.message}');
     }
