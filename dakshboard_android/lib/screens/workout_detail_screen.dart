@@ -9,18 +9,20 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:dakshboard_android/models/workout.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:dakshboard_android/providers/providers.dart';
 
-class WorkoutDetailScreen extends StatefulWidget {
+class WorkoutDetailScreen extends ConsumerStatefulWidget {
   final Workout workout;
   const WorkoutDetailScreen({super.key, required this.workout});
 
   @override
-  State<WorkoutDetailScreen> createState() => _WorkoutDetailScreenState();
+  ConsumerState<WorkoutDetailScreen> createState() => _WorkoutDetailScreenState();
 }
 
-class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> with SingleTickerProviderStateMixin {
+class _WorkoutDetailScreenState extends ConsumerState<WorkoutDetailScreen> with SingleTickerProviderStateMixin {
   final ScreenshotController _screenshotController = ScreenshotController();
   late TabController _tabController;
 
@@ -134,11 +136,12 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> with SingleTi
 
     final avgPace = paceValues.isNotEmpty ? paceValues.reduce((a, b) => a + b) / paceValues.length : null;
     final avgHr = hrValues.isNotEmpty ? hrValues.reduce((a, b) => a + b) / hrValues.length : null;
-    final hrStreamMax = hrValues.isEmpty ? 0.0 : hrValues.fold<double>(0.0, (m, v) => v > m ? v : m);
-    final maxHrRaw = w.maxHeartrate?.toDouble() ?? hrStreamMax;
-    final effectiveMaxHr = maxHrRaw > 0 ? maxHrRaw : 190.0; // 190 default if unknown
+    
+    // Use the user's fixed max HR from their profile (or default to 202)
+    final athlete = ref.watch(athleteProvider).value;
+    final double userMaxHr = (athlete?.maxHr ?? 202).toDouble();
 
-    final zonePcts = _hrZonePcts(hrValues, effectiveMaxHr);
+    final zonePcts = _hrZonePcts(hrValues, userMaxHr);
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
@@ -174,9 +177,9 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> with SingleTi
               child: Column(
                 children: [
                   _heroCard(w),
-                  if (hrValues.isNotEmpty && effectiveMaxHr > 0) ...[
+                  if (hrValues.isNotEmpty && userMaxHr > 0) ...[
                     const SizedBox(height: 16),
-                    _hrZonesCard(zonePcts, effectiveMaxHr),
+                    _hrZonesCard(zonePcts, userMaxHr),
                   ],
                 ],
               ),
@@ -191,7 +194,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> with SingleTi
                   if (hrSpots.isNotEmpty) ...[
                     _chartHeader('Heart Rate', '${avgHr?.round() ?? '--'} bpm avg', _red),
                     const SizedBox(height: 8),
-                    _hrChart(hrSpots, avgHr, effectiveMaxHr),
+                    _hrChart(hrSpots, avgHr, userMaxHr),
                     const SizedBox(height: 24),
                   ],
                   if (paceSpots.isNotEmpty) ...[

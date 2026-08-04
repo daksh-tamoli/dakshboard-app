@@ -25,7 +25,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     setState(() => _isSyncing = true);
     try {
       await ref.read(workoutsProvider.notifier).syncAndRefresh();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Sync error (non-critical): $e');
+    }
     if (mounted) setState(() => _isSyncing = false);
   }
 
@@ -181,18 +183,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               error: (e, _) => SliverFillRemaining(
                 child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.wifi_off_rounded, color: Colors.redAccent, size: 48),
-                      const SizedBox(height: 12),
-                      Text('Failed to load workouts', style: TextStyle(color: Colors.white.withOpacity(0.6))),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: () => ref.read(workoutsProvider.notifier).refresh(),
-                        child: const Text('Retry'),
-                      ),
-                    ],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.cloud_off_rounded, color: Colors.white.withOpacity(0.3), size: 56),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'No workouts yet',
+                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Tap the sync button above to import your Strava activities.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14),
+                        ),
+                        const SizedBox(height: 20),
+                        OutlinedButton.icon(
+                          onPressed: _isSyncing ? null : _triggerSync,
+                          icon: const Icon(Icons.sync_rounded, size: 18),
+                          label: const Text('Sync from Strava'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFC4C02),
+                            side: const BorderSide(color: Color(0xFFFC4C02)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

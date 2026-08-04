@@ -5,6 +5,7 @@ import httpx
 
 from models import Base, engine, Workout, User 
 from schemas import WorkoutCreate, WorkoutOut
+from auth import create_access_token, get_current_user
 import os
 from dotenv import load_dotenv, set_key, find_dotenv
 from datetime import datetime
@@ -62,8 +63,8 @@ def get_db():
 
 # The Ingestion Endpoint
 @app.post("/api/workouts/")
-def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
-    db_workout = Workout(**workout.model_dump())
+def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_workout = Workout(**workout.model_dump(), user_id=current_user.id)
     db.add(db_workout)
     db.commit()
     db.refresh(db_workout)
@@ -72,21 +73,22 @@ def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
 #get framework
 #all workouts — filtered by strava_id if provided
 @app.get("/api/workouts/", response_model=list[WorkoutOut])
-def read_workouts(strava_id: int = None, db: Session = Depends(get_db)):
-    query = db.query(Workout)
-    if strava_id:
-        user = db.query(User).filter(User.strava_id == strava_id).first()
-        if user:
-            query = query.filter(Workout.user_id == user.id)
-    workouts = query.order_by(Workout.date.desc()).all()
+def read_workouts(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    query = db.query(Workout).filter(Workout.user_id == current_user.id)
+    workouts = query.order_by(Workout.date.desc()).offset(skip).limit(limit).all()
     return workouts
 
 #single workout
 @app.get("/api/workouts/{workout_id}")
-def read_workout(workout_id: int, db: Session = Depends(get_db)):
-    workout = db.query(Workout).filter(Workout.id == workout_id).first()
+def read_workout(workout_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    workout = db.query(Workout).filter(Workout.id == workout_id, Workout.user_id == current_user.id).first()
     if not workout:
-        raise HTTPException(status_code = 404, detail = "workout not found")
+        raise HTTPException(status_code=404, detail="workout not found")
     return workout
 
 #created using ai
@@ -213,10 +215,12 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
         print(f"Auto-sync during callback encountered error: {e}")
         
     # Redirect back to mobile app or web frontend
-    # For mobile: use simple strava_id only (no JSON encoding issues)
+    # For mobile: use simple strava_id and JWT token
     import urllib.parse
+    jwt_token = create_access_token(data={"sub": str(athlete_id)})
+    
     if "://" in frontend_base and not (frontend_base.startswith("http://") or frontend_base.startswith("https://")):
-        redirect_url = f"{frontend_base}?auth=success&strava_id={athlete_id}"
+        redirect_url = f"{frontend_base}?auth=success&strava_id={athlete_id}&token={jwt_token}"
         html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -247,22 +251,19 @@ async def strava_callback(code: str, state: str = "", scope: str = "", request: 
         return HTMLResponse(content=html_content)
     else:
         athlete_param = urllib.parse.quote(json.dumps(athlete_data)) if athlete_data else ""
-        redirect_url = f"{frontend_base.rstrip('/')}/?auth=success&athlete={athlete_param}"
+        redirect_url = f"{frontend_base.rstrip('/')}/?auth=success&athlete={athlete_param}&token={jwt_token}"
         return RedirectResponse(url=redirect_url)
 
 
 @app.get("/api/auth/me")
-def get_me(strava_id: int, db: Session = Depends(get_db)):
+def get_me(current_user: User = Depends(get_current_user)):
     """Return stored athlete profile by strava_id — used by mobile app after OAuth"""
-    user = db.query(User).filter(User.strava_id == strava_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
     return {
-        "id": user.strava_id,
-        "firstname": user.firstname or "",
-        "lastname": user.lastname or "",
-        "profile": user.profile or "",
-        "strava_id": user.strava_id,
+        "id": current_user.strava_id,
+        "firstname": current_user.firstname or "",
+        "lastname": current_user.lastname or "",
+        "profile": current_user.profile or "",
+        "strava_id": current_user.strava_id,
     }
 
 

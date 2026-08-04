@@ -39,21 +39,20 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   }
 
   Future<void> _navigate() async {
-    await Future.delayed(const Duration(milliseconds: 1800));
+    await Future.delayed(const Duration(milliseconds: 1500));
     if (!mounted) return;
 
-    final athleteAsync = ref.read(athleteProvider);
-    athleteAsync.when(
-      data: (athlete) {
-        if (athlete != null) {
-          context.go('/home');
-        } else {
-          context.go('/login');
-        }
-      },
-      loading: () => context.go('/login'),
-      error: (_, __) => context.go('/login'),
-    );
+    try {
+      final athlete = await ref.read(athleteProvider.future);
+      if (!mounted) return;
+      if (athlete != null) {
+        context.go('/home');
+      } else {
+        context.go('/login');
+      }
+    } catch (_) {
+      if (mounted) context.go('/login');
+    }
   }
 
   @override

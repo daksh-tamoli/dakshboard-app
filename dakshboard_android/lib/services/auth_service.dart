@@ -14,6 +14,7 @@ import 'package:dakshboard_android/services/api_service.dart';
 class AuthService {
   static const String _athleteKey = 'strava_athlete';
   static const String _stravaIdKey = 'strava_id';
+  static const String _jwtTokenKey = 'jwt_token';
 
   // ─── Primary OAuth Flow ───────────────────────────────────
   Future<Athlete?> loginWithStrava() async {
@@ -39,9 +40,13 @@ class AuthService {
 
     final uri = Uri.parse(result);
     final stravaIdStr = uri.queryParameters['strava_id'];
-    if (stravaIdStr != null) {
+    final token = uri.queryParameters['token'];
+
+    if (stravaIdStr != null && token != null) {
       final stravaId = int.tryParse(stravaIdStr);
       if (stravaId != null) {
+        await saveToken(token);
+        api.setToken(token); // Update current session
         return await fetchAndSaveAthleteByStravaId(stravaId);
       }
     }
@@ -84,7 +89,17 @@ class AuthService {
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 10),
       ));
-      final response = await dio.get('/api/auth/me', queryParameters: {'strava_id': stravaId});
+      final token = await getToken();
+      if (token != null) {
+        dio.interceptors.add(InterceptorsWrapper(
+          onRequest: (options, handler) {
+            options.headers['Authorization'] = 'Bearer $token';
+            return handler.next(options);
+          },
+        ));
+      }
+
+      final response = await dio.get('/api/auth/me');
       final data = response.data as Map<String, dynamic>;
 
       final athlete = Athlete(
@@ -117,6 +132,16 @@ class AuthService {
     debugPrint('[Auth] Athlete saved via SharedPreferences: ${athlete.id}');
   }
 
+  Future<void> saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_jwtTokenKey, token);
+  }
+
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_jwtTokenKey);
+  }
+
   Future<Athlete?> getStoredAthlete() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -142,6 +167,7 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_athleteKey);
     await prefs.remove(_stravaIdKey);
+    await prefs.remove(_jwtTokenKey);
   }
 
   Future<bool> isLoggedIn() async {

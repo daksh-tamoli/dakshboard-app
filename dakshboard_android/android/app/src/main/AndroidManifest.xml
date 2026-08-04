@@ -42,15 +42,24 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+        </activity>
 
-            <!-- Strava OAuth callback scheme for flutter_web_auth_2 -->
-            <intent-filter android:label="strava_oauth">
+        <!-- flutter_web_auth_2 dedicated callback activity -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="com.dakshtamoli.dakshboard" android:host="oauth" android:pathPrefix="/callback" />
+                <data android:scheme="com.dakshtamoli.dakshboard" />
             </intent-filter>
         </activity>
+
+        <!-- Google Maps API Key -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyA0B0C0D0E0F0G0H0I0J0K0L0M0N0O0P0Q" />
 
         <!-- Flutter embedding -->
         <meta-data

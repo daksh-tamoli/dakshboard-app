@@ -20,7 +20,14 @@ class AthleteNotifier extends AsyncNotifier<Athlete?> {
   @override
   Future<Athlete?> build() async {
     final auth = ref.read(authServiceProvider);
-    return auth.getStoredAthlete();
+    final athlete = await auth.getStoredAthlete();
+    if (athlete != null) {
+      final token = await auth.getToken();
+      if (token != null) {
+        ref.read(apiServiceProvider).setToken(token);
+      }
+    }
+    return athlete;
   }
 
   Future<void> loginWithStrava() async {
@@ -28,6 +35,12 @@ class AthleteNotifier extends AsyncNotifier<Athlete?> {
     final auth = ref.read(authServiceProvider);
     try {
       final athlete = await auth.loginWithStrava();
+      if (athlete != null) {
+        final token = await auth.getToken();
+        if (token != null) {
+          ref.read(apiServiceProvider).setToken(token);
+        }
+      }
       state = AsyncValue.data(athlete);
     } catch (e, st) {
       state = AsyncValue.error(e, st);
@@ -55,9 +68,7 @@ class WorkoutsNotifier extends AsyncNotifier<List<Workout>> {
 
   Future<List<Workout>> _fetch() async {
     final api = ref.read(apiServiceProvider);
-    final auth = ref.read(authServiceProvider);
-    final stravaId = await auth.getStravaId();
-    final workouts = await api.fetchWorkouts(stravaId: stravaId);
+    final workouts = await api.fetchWorkouts(); // Token handles auth now
     // Sort newest first
     workouts.sort((a, b) {
       if (a.date == null && b.date == null) return 0;
@@ -75,11 +86,9 @@ class WorkoutsNotifier extends AsyncNotifier<List<Workout>> {
 
   Future<void> syncAndRefresh() async {
     final api = ref.read(apiServiceProvider);
-    final auth = ref.read(authServiceProvider);
-    final stravaId = await auth.getStravaId();
     state = const AsyncValue.loading();
     try {
-      await api.syncLatest(stravaId: stravaId);
+      await api.syncLatest(); // Token handles auth now
     } catch (e) {
       // 429 rate limit or other sync error — don't fail, just load cached workouts
       debugPrint('Sync error (will load cached): $e');

@@ -11,6 +11,8 @@ class ApiService {
 
   late final Dio _dio;
 
+  String? _jwtToken;
+
   ApiService() {
     _dio = Dio(BaseOptions(
       baseUrl: baseUrl,
@@ -25,13 +27,29 @@ class ApiService {
       responseBody: false,
       error: true,
     ));
+
+    // Auth interceptor for JWT
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        if (_jwtToken != null) {
+          options.headers['Authorization'] = 'Bearer $_jwtToken';
+        }
+        return handler.next(options);
+      },
+    ));
   }
 
-  // Fetch workouts for a specific user (filtered by strava_id)
-  Future<List<Workout>> fetchWorkouts({int? stravaId}) async {
+  void setToken(String token) {
+    _jwtToken = token;
+  }
+
+  // Fetch workouts for the currently authenticated user
+  Future<List<Workout>> fetchWorkouts({int? skip = 0, int? limit = 100}) async {
     try {
-      final Map<String, dynamic>? params = stravaId != null ? {'strava_id': stravaId} : null;
-      final response = await _dio.get('/api/workouts/', queryParameters: params);
+      final response = await _dio.get('/api/workouts/', queryParameters: {
+        'skip': skip,
+        'limit': limit,
+      });
       final List<dynamic> data = response.data;
       return data.map((json) => Workout.fromJson(json as Map<String, dynamic>)).toList();
     } on DioException catch (e) {
@@ -40,10 +58,9 @@ class ApiService {
   }
 
   // Trigger sync of latest Strava activities
-  Future<Map<String, dynamic>> syncLatest({int? stravaId}) async {
+  Future<Map<String, dynamic>> syncLatest() async {
     try {
-      final Map<String, dynamic>? params = stravaId != null ? {'strava_id': stravaId} : null;
-      final response = await _dio.get('/api/strava/sync-latest', queryParameters: params);
+      final response = await _dio.post('/api/strava/sync-latest');
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw ApiException('Sync failed: ${e.message}');
