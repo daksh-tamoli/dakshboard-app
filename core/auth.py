@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 from database import get_db
 import models
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-development-key-12345")
+import secrets
+
+# Generate a random fallback key for local dev if not provided.
+# WARNING: On Render, this MUST be set in the Environment Variables 
+# (JWT_SECRET_KEY) otherwise users will be logged out on every restart!
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 
@@ -36,7 +41,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         strava_id: str = payload.get("sub")
         if strava_id is None:
             raise credentials_exception
-    except jwt.PyJWTError:
+    except jwt.InvalidTokenError:
+        raise credentials_exception
+    except Exception:
         raise credentials_exception
         
     user = db.query(models.User).filter(models.User.strava_id == int(strava_id)).first()
